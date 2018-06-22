@@ -53,37 +53,63 @@ def consume_job_queue():
 
     def _update_run_progress(workflow_uuid, msg):
         """Register succeeded Jobs to DB."""
-        Session.query(Run).filter_by(workflow_uuid=workflow_uuid).\
-            update({status: msg['progress'][status]['total']
-                    for status in job_statuses})
+        run = Session.query(Run).filter_by(workflow_uuid=workflow_uuid).first()
+        for status in job_statuses:
+            if status in msg['progress']:
+                previous_total = getattr(run, status)
+                if status == 'planned':
+                    if previous_total > 0:
+                        continue
+                    else:
+                        setattr(run, status,
+                                msg['progress']['planned']['total'])
+                else:
+                    new_total = 0
+                    for job_id in msg['progress'][status]['job_ids']:
+                        job = Session.query(Job).\
+                            filter_by(id_=job_id).one_or_none()
+                        if job:
+                            if job.status != status:
+                                new_total += 1
+                    new_total = previous_total + new_total
+                    setattr(run, status, new_total)
+        Session.add(run)
 
     def _update_job_progress(workflow_uuid, msg):
         """Update job progress for jobs in received message."""
         current_run = Session.query(Run).filter_by(
             workflow_uuid=workflow_uuid).one_or_none()
         for status in job_statuses:
-            status_progress = msg['progress'][status]
-            for job_id in status_progress['job_ids']:
-                Session.query(Job).filter_by(id_=job_id).\
-                    update({'workflow_uuid': workflow_uuid,
-                            'status': status})
-                run_job = Session.query(RunJobs).filter_by(
-                    run_id=current_run.id_,
-                    job_id=job_id).first()
-                if not run_job:
-                    run_job = RunJobs()
-                    run_job.id_ = uuid.uuid4()
-                    run_job.run_id = current_run.id_
-                    run_job.job_id = job_id
-                    Session.add(run_job)
+            if status in msg['progress']:
+                status_progress = msg['progress'][status]
+                for job_id in status_progress['job_ids']:
+                    try:
+                        uuid.UUID(job_id)
+                    except Exception:
+                        continue
+                    print('updating job_id:', job_id)
+                    Session.query(Job).filter_by(id_=job_id).\
+                        update({'workflow_uuid': workflow_uuid,
+                                'status': status})
+                    run_job = Session.query(RunJobs).filter_by(
+                        run_id=current_run.id_,
+                        job_id=job_id).first()
+                    if not run_job and current_run:
+                        run_job = RunJobs()
+                        run_job.id_ = uuid.uuid4()
+                        run_job.run_id = current_run.id_
+                        run_job.job_id = job_id
+                        Session.add(run_job)
 
     def _callback_job_status(ch, method, properties, body):
         body_dict = json.loads(body)
         workflow_uuid = body_dict.get('workflow_uuid')
         if workflow_uuid:
-            status = WorkflowStatus(body_dict.get('status'))
-            print(" [x] Received workflow_uuid: {0} status: {1}".
-                  format(workflow_uuid, status))
+            status = body_dict.get('status')
+            if status:
+                status = WorkflowStatus(status)
+                print(" [x] Received workflow_uuid: {0} status: {1}".
+                      format(workflow_uuid, status))
             logs = body_dict.get('logs') or ''
             Workflow.update_workflow_status(Session, workflow_uuid,
                                             status, logs, None)
