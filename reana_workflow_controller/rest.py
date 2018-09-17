@@ -280,6 +280,7 @@ def create_workflow():  # noqa
                             name=workflow_name,
                             owner_id=request.args['user'],
                             specification=request.json['specification'],
+                            reana_yaml=request.json['reana_yaml'],
                             parameters=request.json.get('parameters'),
                             type_=request.json['type'],
                             logs='')
@@ -581,6 +582,90 @@ def get_files(workflow_id_or_name):  # noqa
           current_app.config['SHARED_VOLUME_PATH'],
           workflow.get_workspace()))
         return jsonify(file_list), 200
+
+    except WorkflowInexistentError:
+        return jsonify({'message': 'REANA_WORKON is set to {0}, but '
+                                   'that workflow does not exist. '
+                                   'Please set your REANA_WORKON environment '
+                                   'variable appropriately.'.
+                                   format(workflow_id_or_name)}), 404
+    except KeyError:
+        return jsonify({"message": "Malformed request."}), 400
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
+
+@restapi_blueprint.route('/workflows/<workflow_id_or_name>/workspace/output',
+                         methods=['GET'])
+def get_output_files(workflow_id_or_name):  # noqa
+    r"""List all ouputs files of a workflow.
+
+    ---
+    get:
+      summary: Returns the workflow output file list.
+      description: >-
+        This resource retrieves the output file list of a workflow, given
+        its workflow UUID.
+      operationId: get_output_files
+      produces:
+        - application/json
+      parameters:
+        - name: user
+          in: query
+          description: Required. UUID of workflow owner.
+          required: true
+          type: string
+        - name: workflow_id_or_name
+          in: path
+          description: Required. Workflow UUID or name.
+          required: true
+          type: string
+      responses:
+        200:
+          description: >-
+            Requests succeeded. The list of output files has been
+            retrieved.
+          schema:
+            type: array
+            items:
+              type: string
+        400:
+          description: >-
+            Request failed. The incoming data specification seems malformed.
+        404:
+          description: >-
+            Request failed. Workflow does not exist.
+          examples:
+            application/json:
+              {
+                "message": "Workflow 256b25f4-4cfb-4684-b7a8-73872ef455a1 does
+                            not exist."
+              }
+        500:
+          description: >-
+            Request failed. Internal controller error.
+          examples:
+            application/json:
+              {
+                "message": "Internal workflow controller error."
+              }
+    """
+    try:
+        user_uuid = request.args['user']
+        user = User.query.filter(User.id_ == user_uuid).first()
+        if not user:
+            return jsonify(
+                {'message': 'User {} does not exist'.format(user)}), 404
+
+        workflow = _get_workflow_with_uuid_or_name(workflow_id_or_name,
+                                                   user_uuid)
+        response = []
+        if 'outputs' in workflow.reana_yaml:
+            if 'files' in workflow.reana_yaml['outputs']:
+                response += workflow.reana_yaml['outputs']['files']
+            if 'directories' in workflow.reana_yaml['outputs']:
+                response += workflow.reana_yaml['outputs']['directories']
+        return jsonify(response), 200
 
     except WorkflowInexistentError:
         return jsonify({'message': 'REANA_WORKON is set to {0}, but '

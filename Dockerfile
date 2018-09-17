@@ -23,6 +23,7 @@ FROM python:3.6
 RUN apt-get update && \
     apt-get install -y vim-tiny && \
     pip install --upgrade pip
+RUN pip install -e git://github.com/dinosk/reana-db.git@reana-yaml-in-models#egg=reana-db
 
 COPY CHANGES.rst README.rst setup.py /code/
 COPY reana_workflow_controller/version.py /code/reana_workflow_controller/
@@ -30,9 +31,7 @@ WORKDIR /code
 RUN pip install --no-cache-dir requirements-builder && \
     requirements-builder -e all -l pypi setup.py | pip install --no-cache-dir -r /dev/stdin && \
     pip uninstall -y requirements-builder
-
 COPY . /code
-
 # Debug off by default
 ARG DEBUG=false
 
